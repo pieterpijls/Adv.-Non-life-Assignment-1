@@ -1,0 +1,300 @@
+---
+title: "Assignment 1"
+author: "Pieter Pijls"
+date: "28 October 2017"
+output:
+  pdf_document: default
+  html_document:
+    theme: spacelab
+    toc: yes
+    toc_depth: 2
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document: default
+graphics: yes
+---
+
+```{r, include=FALSE}
+# overall knitr options
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, warning = FALSE, message = FALSE)
+# increase width of R output
+options(width = 250) # comment out for PDF
+```
+
+
+#Load packages
+
+First, we load some packages we will need in this assignment. 
+```{r}
+library(tidyverse)
+library(ggthemes)
+library(plotly)
+library(ggplot2)
+library(knitr)
+library(statmod) 
+library(actuar)
+```
+
+# Part 1
+
+## Overview
+
+In the first part of the assignment, we will fit various parametric models to censored/truncated loss data and compare results. The file SeverityCensoring.txt contains information about 9062 claims paid by an insurance company over some observation period.
+
+1. The column claimAmount shows how much the insurance company paid on each claim. This is the loss data that we will use for model fitting.
+2. The column deductible shows that there is a fixed deductible of 100 EUR for each policy, which means that all the observed claim amounts are truncated from the left at 100.
+3. The column rc shows whether right-censoring is present or not: NA indicates that the claim is fully settled by the end of the observation period and therefore the observed claim amount is the full (uncensored) loss associated with this claim. On the other hand, a number in the rc column indicates that the claim is not yet fully settled, so the observed claim amount is right-censored.
+
+## Import the data
+
+We read the text file which is consulted by using the following path. We specify that the first rows are the variable names by setting header equal to TRUE. 
+```{r}
+df <- read.table(file="/Users/pieterpijls/Documents/KU LEUVEN/MFAE/ADVANCED NON LIFE/Assignment 1/SeverityCensoring.txt", header=TRUE,sep=" ")
+setwd("/Users/pieterpijls/Documents/KU LEUVEN/MFAE/ADVANCED NON LIFE/Assignment 1/")
+```
+
+##Exploratory analysis
+First, we analyze the main statistics of the claimAmount and rc by using the function `summary`.
+
+```{r}
+summary(df$claimAmount)
+summary(df$rc)
+```
+
+Next, we create an **interactive** histogram of the claimAmount.
+```{r}
+p <- ggplot(df, aes(x = claimAmount)) +
+  geom_histogram() +
+  theme_hc()
+ggplotly(p)
+```
+
+
+## Question 1
+
+We start by fitting an exponential distribution to the loss data. Compute the log-likelihood function for this model, taking truncation and censoring into account, and maximize it numerically to find the MLE of the rate parameter. Also compute the Akaike Information Criterion (AIC) for this model, for later comparison with other models.
+
+First we create an indicator for right-censoring. Next, we create three new variables. In x the claimAmount data is stored, in rc the new indactor is stored and in d the deductible is stored.
+
+```{r}
+df$rc <- !is.na(df$rc)
+x <- df$claimAmount; rc <- df$rc; d <- df$deductible
+```
+
+Here, we compute the log-likelihood function for the exponantial model, taking truncation and censoring into account.
+
+```{r}
+loglik.exp <- function(par){
+  sum(dexp(x[!rc],par,log=T)) + sum(pexp(x[rc],par,log.p=T,lower.tail=F)) - 
+    sum(pexp(d,par,log.p=T,lower.tail=F))
+}
+```
+
+Next, we maximize it numerically to find the MLE of the rate parameter by optimizing the log likelihood function. We store the estimated parameter in the variable par.exp.
+
+```{r}
+oo <- optimize(loglik.exp,c(0,1),maximum=T)
+par.exp <- oo$maximum
+par.exp 
+```
+
+Finally, we compute the Akaike Information Criterion (AIC) for this model, for later comparison with other models.
+
+```{r}
+AIC.exp <- 2-2*oo$objective
+AIC.exp
+```
+
+##  Question 2
+
+We repeat exercise 1 for lognormal, inverse Gaussian and Burr distributions. First, we compute the log-likelihood function (under truncation and censoring) and give the MLEs of the parameters for each of these models. Next, we also compute the AIC for each model. **Notice** we use exactly the same methodology as with the exponantial model!
+
+###Lognormal
+```{r}
+loglik.lnorm <- function(par){
+  sum(dlnorm(x[!rc],par[1],par[2],log=T)) + sum(plnorm(x[rc],par[1],par[2],log.p=T,lower.tail=F)) - 
+    sum(plnorm(d,par[1],par[2],log.p=T,lower.tail=F))
+}
+```
+
+```{r}
+oo <- optim(c(2*log(mean(x))-log(mean(x^2))/2,sqrt(log(mean(x^2))-2*log(mean(x)))),loglik.lnorm,control=list(fnscale=-1))
+par.lnorm <- oo$par
+par.lnorm
+
+```{r}
+AIC.lnorm <- 4-2*oo$value
+AIC.lnorm
+```
+
+###Inverse Gaussian
+```{r}
+loglik.invg <- function(par){
+  sum(dinvgauss(x[!rc],par[1],par[2],log=T)) +
+    sum(pinvgauss(x[rc],par[1],par[2],log.p=T,lower.tail=F)) -
+    sum(pinvgauss(d,par[1],par[2],log.p=T,lower.tail=F))
+}
+```
+
+```{r}
+oo <- optim(c(mean(x),mean(x)^3/var(x)),loglik.invg,control=list(fnscale=-1))
+par.invg <- oo$par
+par.invg
+```
+
+```{r}
+AIC.invg <- 4-2*oo$value
+AIC.invg
+```
+
+###Burr
+```{r}
+loglik.burr <- function(par){
+  sum(dburr(x[!rc],shape1=par[1],shape2=par[2],rate=par[3],log=T)) +
+    sum(pburr(x[rc],shape1=par[1],shape2=par[2],rate=par[3],log.p=T,lower.tail=F)) -
+    sum(pburr(d,shape1=par[1],shape2=par[2],rate=par[3],log.p=T,lower.tail=F))
+}
+```
+
+```{r}
+oo <- optim(c(1,1,1),loglik.burr,control=list(fnscale=-1))
+par.burr <- oo$par
+par.burr
+```
+
+```{r}
+AIC.burr <- 6-2*oo$value
+AIC.burr
+```
+
+###Analyse AIC
+
+When we compare the different AIC, it seems like the Inverse Gaussian model gives the best fit as it has the lowest AIC.
+
+```{r}
+#Exponantial
+AIC.exp
+#Burr
+AIC.burr
+#Inverse Gaussian
+AIC.invg
+#Lognormal
+AIC.lnorm
+```
+
+## Question 3
+
+Next, we want to fit an Erlang mixture distribution with 5 components to the loss data. 
+
+Since the usual maximum likelihood approach will not work for mixture distributions, we will make use of the EM (Expectation-Maximization) algorithm to estimate parameters. Thankfully, the R code for implementing the EM algorithm for Erlang mixtures was de- veloped in ? and is available for our use. Download the file 2014-12-16_ME.R into your working directory and run:
+
+Fill in the dots so that loss is the vector of 9062 losses as provided in the claimAmount column, and nrc is the same as loss, but with censored loss amounts replaced by NA’s. This will take a few minutes to run, and will produce some warning messages that you can ignore.
+
+Inspect the object fit.ME, identify the MLEs for the five weights α1, . . . , α5, the five shape parameters r1, . . . , r5, and the scale parameter θ. Also identify the AIC for this model.
+
+Fill in the dots so that loss is the vector of 9062 losses as provided in the claimAmount column, and nrc is the same as loss, but with censored loss amounts replaced by NA’s. This will take a few minutes to run, and will produce some warning messages that you can ignore.
+Inspect the object fit.ME, identify the MLEs for the five weights α1, . . . , α5, the five shape parameters r1, . . . , r5, and the scale parameter θ. Also identify the AIC for this model.
+
+```{r}
+source("2014-12-16_ME.R")
+nrc <- x; nrc[rc] <- NA
+fit.ME <- ME_fit(x, nrc, trunclower = 100, M=5, s=3)
+theta <- fit.ME$theta 
+shape <- fit.ME$shape 
+alpha <- fit.ME$alpha
+AIC.ME <- fit.ME$AIC
+AIC.ME
+```
+
+
+
+## Question 4
+Here, we plot the Kaplan-Meier estimate of the survival function for the loss data.
+
+```{r}
+deds <- d ; loss <- x ; full <- rc
+fit <- survfit(Surv(deds, loss, full) ~ 1)
+plot(fit, mark.time=F, conf.int=F,lwd=2)
+```
+
+## Question 5
+
+Add the plots of the best-fitting (i) exponential, (ii) lognormal, (iii) inverse Gaussian, (iv) Burr and (v) Erlang mixture survival functions to the Kaplan-Meier plot. Recall that we have a left-truncation at 100, so we should plot the curve 1−F(x) for each of the 1−F (100) five models, with F denoting the cdf with the best-fitting parameters. 
+
+Which of the five parametric models seems closest to the Kaplan-Meier estimate?
+
+Note: The mixed Erlang cdf can be computed as ME_cdf(x, alpha, shape, theta).
+
+```{r}
+surv.exp <- function(y) {pexp(y,par.exp,lower.tail=F)/pexp(100,par.exp,lower.tail=F)}
+surv.lnorm <- function(y) {plnorm(y,par.lnorm[1],par.lnorm[2],lower.tail=F)/plnorm(100,par.lnorm[1],par.lnorm[2],lower.tail=F)}
+surv.invg <- function(y) {pinvgauss(y,par.invg[1],par.invg[2],lower.tail=F)/pinvgauss(100,par.invg[1],par.invg[2],lower.tail=F)}
+surv.burr <- function(y) {pburr(y,par.burr[1],par.burr[2],par.burr[3],lower.tail=F)/pburr(100,par.burr[1],par.burr[2],par.burr[3],lower.tail=F)}
+surv.ME <- function(y) {ME_cdf(y, theta, shape, alpha, trunclower = 100, lower.tail = FALSE)}
+```
+
+```{r}
+plot(fit, mark.time=F, conf.int=F,lwd=2)
+curve(surv.exp(x),from=0,col=2,add=T)
+curve(surv.lnorm(x),from=0,col=3,add=T)
+curve(surv.invg(x),from=0,col=4,add=T)
+curve(surv.burr(x),from=0,col=5,add=T)
+curve(surv.ME(x),from=0,col=6,add=T)
+legend('topright', legend = c('KM estimate', 'exp', 'lnorm', 'invgauss', 'burr', 'ME'), col = 1:6, lwd = c(2,1,1,1,1,1))
+```
+
+
+##  Question 6
+Compare the AIC values for the five parametric models considered above. Which model
+gives the best fit according to AIC? Is this consistent with your answer to exercise 5?
+
+```{r}
+c(AIC.exp, AIC.lnorm, AIC.invg, AIC.burr, AIC.ME)
+```
+
+# Part 2
+##Overview
+
+In the second part of the assignment, you will use splicing to fit a body-tail combination model to the Secura Re loss data, using a shifted exponential distribution for the body and a Pareto distribution with unit scale for the tail, as demonstrated in class. The data set is available in the file SecuraRe.txt. Recall the spliced pdf that was derived in class:
+
+where n is the sample size and Xn−k,n denotes the (k + 1)th largest observation in the data set. We also derived the cdf for this distribution:
+
+##  Question 7
+Verify the expression for F(x).
+
+
+##  Question 8
+Use the estimate kˆ = 95 (provided by extreme value theory) to compute the log-likelihood function for the spliced model, and maximize this function to find the MLEs for λ and α. As in exercise 2, use “reasonable” starting values for numerical optimization.
+
+```{r}
+loss <- read.table("SecuraRe.txt",header=T)$Loss
+n <- length(loss)
+k <- 95
+sh <- 1200000
+thr <- sort(loss)[n-k]
+loglik <- function(par) {
+  lambda <- par[1]
+  alpha <- par[2]
+  # indicator
+  I <- loss <= thr
+  # Likelihood contributions
+  L <- I * (n-k)/n * lambda * exp(-lambda*(loss-sh))/(1 - exp(-lambda*(thr-sh))) + 
+    (1-I) * k/n * alpha * (loss+1)^(-alpha-1)/(thr+1)^(-alpha)
+  # Log Likelihood
+  sum(log(L)) 
+}
+oo <- optim(c(1/mean(loss), log(2)/log(median(loss))), loglik, control=list(fnscale=-1))
+lambda <- oo$par[1]
+alpha <- oo$par[2]
+```
+
+##  Question 9
+Finaly, we plot the empirical distribution function of the loss data, together with the cdf of the spliced distribution. The graph illustrates that the model is a good fit to the data.
+
+```{r}
+plot(ecdf(loss), do.points = FALSE, xlab = 'Claim size', ylab = 'CDF', main = 'Comparison of Empirical CDF and fitted CDF with splicing', xlim = c(sh, max(loss)), lwd = 2)
+# Fitted CDF
+curve((x >= sh) * ((x <= thr) * (n-k)/n * (1 - exp(-lambda*(x - sh))) / (1 - exp(-lambda*(thr - sh))) + (x > thr) * (1 - k/n * x^(-alpha) / thr^(-alpha))), col=2, lwd=2, add=T)
+legend('right', c('Empirical CDF', 'Fitted CDF'), col = c(1, 2), lwd = 2)
+```
